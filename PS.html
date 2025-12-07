@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PROTOCOL BREACH: Re-Sync Attack Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=JetBrains+Mono:wght@300;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        /* --- 1. CORE VARIABLES & RESET --- */
+        :root {
+            --bg-deep: #050505;
+            --bg-panel: rgba(15, 20, 25, 0.9);
+            --neon-green: #00ff41;
+            --neon-cyan: #00f3ff;
+            --neon-red: #ff2a2a;
+            --neon-purple: #bc13fe;
+            --text-primary: #e6e6e6;
+            --text-dim: #8892b0;
+            --border-glow: 0 0 15px rgba(0, 243, 255, 0.2);
+            --font-display: 'Rajdhani', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--neon-cyan) var(--bg-deep); }
+
+        body {
+            background-color: var(--bg-deep);
+            color: var(--text-primary);
+            font-family: var(--font-display);
+            overflow-x: hidden;
+            line-height: 1.6;
+            counter-reset: slide-counter;
+        }
+
+        /* --- 2. BACKGROUND FX --- */
+        #matrixCanvas {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: -1;
+            opacity: 0.15;
+        }
+
+        .scanlines {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                        linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        /* --- 3. LAYOUT UTILITIES --- */
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 40px; }
+        
+        section {
+            min-height: 100vh;
+            padding: 80px 0;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            position: relative;
+        }
+
+        /* Slide Numbering */
+        section::after {
+            counter-increment: slide-counter;
+            content: "SLIDE_" counter(slide-counter, decimal-leading-zero);
+            position: absolute;
+            bottom: 20px;
+            right: 40px;
+            font-family: var(--font-mono);
+            color: var(--text-dim);
+            font-size: 0.8rem;
+            opacity: 0.5;
+        }
+
+        .grid-split {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 80px;
+            align-items: center;
+        }
+
+        .grid-tri {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 40px;
+        }
+
+        /* --- 4. TYPOGRAPHY & GLITCH --- */
+        h1 {
+            font-size: 6rem;
+            line-height: 0.9;
+            text-transform: uppercase;
+            color: white;
+            margin-bottom: 20px;
+            letter-spacing: 2px;
+        }
+
+        h2 {
+            font-size: 3rem;
+            color: var(--neon-cyan);
+            text-transform: uppercase;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            text-shadow: 0 0 20px rgba(0, 243, 255, 0.4);
+        }
+        
+        h2::before { content: '//'; color: var(--neon-green); font-family: var(--font-mono); font-size: 2rem; }
+
+        h3 { font-size: 1.8rem; color: white; margin-bottom: 15px; font-weight: 700; letter-spacing: 1px; }
+        
+        p { 
+            font-family: var(--font-mono); 
+            font-size: 1.1rem; 
+            line-height: 1.8; 
+            color: var(--text-dim); 
+            margin-bottom: 25px; 
+            font-weight: 300;
+        }
+
+        .highlight { color: var(--neon-green); font-weight: 600; }
+        .danger { color: var(--neon-red); text-shadow: 0 0 10px rgba(255, 42, 42, 0.5); }
+        .purple { color: var(--neon-purple); }
+        .code-snippet { background: rgba(0,0,0,0.5); padding: 2px 8px; border-radius: 4px; color: var(--neon-cyan); border: 1px solid rgba(0, 243, 255, 0.2); }
+
+        /* Glitch Animation */
+        .glitch-wrapper { position: relative; display: inline-block; }
+        .glitch { position: relative; color: white; }
+        .glitch::before, .glitch::after {
+            content: attr(data-text);
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        }
+        .glitch::before { left: 2px; text-shadow: -1px 0 var(--neon-red); clip-path: inset(44% 0 61% 0); animation: glitch-anim 4s infinite linear alternate-reverse; }
+        .glitch::after { left: -2px; text-shadow: -1px 0 var(--neon-cyan); clip-path: inset(12% 0 58% 0); animation: glitch-anim2 4s infinite linear alternate-reverse; }
+
+        @keyframes glitch-anim { 0% { clip-path: inset(12% 0 85% 0); } 100% { clip-path: inset(84% 0 12% 0); } }
+        @keyframes glitch-anim2 { 0% { clip-path: inset(65% 0 10% 0); } 100% { clip-path: inset(5% 0 89% 0); } }
+
+        /* --- 5. UI PANELS & CARDS --- */
+        .tech-panel {
+            background: var(--bg-panel);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 40px;
+            position: relative;
+            transition: all 0.3s ease;
+            height: 100%;
+        }
+        .tech-panel:hover {
+            border-color: var(--neon-cyan);
+            box-shadow: 0 0 30px rgba(0, 243, 255, 0.1);
+            transform: translateY(-5px);
+        }
+        .tech-panel::before { content: ''; position: absolute; top: 0; right: 0; width: 30px; height: 30px; border-top: 2px solid var(--neon-cyan); border-right: 2px solid var(--neon-cyan); }
+        .tech-panel::after { content: ''; position: absolute; bottom: 0; left: 0; width: 30px; height: 30px; border-bottom: 2px solid var(--neon-cyan); border-left: 2px solid var(--neon-cyan); }
+
+        /* Terminal Window */
+        .terminal {
+            background: #080808;
+            border: 1px solid #333;
+            border-top: 25px solid #1a1a1a;
+            border-radius: 4px;
+            padding: 20px;
+            font-family: var(--font-mono);
+            position: relative;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+            margin-bottom: 20px;
+        }
+        .terminal::before { content: '● ● ●'; color: #555; font-size: 10px; position: absolute; top: -18px; left: 10px; letter-spacing: 2px; }
+        .cmd-line::before { content: 'root@sys:~# '; color: var(--neon-green); }
+        .output { color: var(--text-dim); display: block; margin-bottom: 5px; }
+
+        /* --- 6. INTERACTIVE LAB --- */
+        .crypto-lab { background: rgba(0, 0, 0, 0.6); border: 1px solid var(--neon-green); padding: 30px; margin-top: 30px; }
+        .lab-input { width: 100%; background: #111; border: 1px solid #333; color: var(--neon-green); font-family: var(--font-mono); padding: 15px; font-size: 1.1rem; margin-bottom: 20px; transition: 0.3s; }
+        .lab-input:focus { outline: none; border-color: var(--neon-green); box-shadow: 0 0 15px rgba(0, 255, 65, 0.2); }
+        .lab-result { background: #1a0505; border-left: 4px solid var(--neon-red); padding: 20px; font-family: var(--font-mono); color: #ffcccc; min-height: 60px; word-break: break-all; }
+
+        /* --- 7. NAVIGATION --- */
+        nav { position: fixed; top: 0; width: 100%; background: rgba(5, 5, 5, 0.95); backdrop-filter: blur(15px); border-bottom: 1px solid rgba(255,255,255,0.1); z-index: 1000; padding: 15px 0; }
+        .nav-inner { display: flex; justify-content: space-between; align-items: center; }
+        .logo { font-size: 1.5rem; font-weight: 700; color: white; letter-spacing: 2px; }
+        .logo span { color: var(--neon-green); }
+        .nav-links a { color: var(--text-dim); text-decoration: none; margin-left: 30px; font-family: var(--font-mono); font-size: 0.85rem; transition: 0.3s; text-transform: uppercase; }
+        .nav-links a:hover { color: var(--neon-cyan); text-shadow: 0 0 8px var(--neon-cyan); }
+        .btn-glitch { border: 1px solid var(--neon-green); color: var(--neon-green); padding: 10px 30px; text-decoration: none; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 2px; transition: 0.3s; }
+        .btn-glitch:hover { background: var(--neon-green); color: black; box-shadow: 0 0 20px var(--neon-green); }
+
+        /* --- 8. SMOOTH SCROLL ANIMATIONS --- */
+        /* Updated for smoother entry with scale and blur */
+        .reveal { 
+            opacity: 0; 
+            transform: translateY(50px) scale(0.95); 
+            filter: blur(10px);
+            transition: all 1.2s cubic-bezier(0.23, 1, 0.32, 1); 
+        }
+        .reveal.active { 
+            opacity: 1; 
+            transform: translateY(0) scale(1); 
+            filter: blur(0);
+        }
+        
+        /* Stagger delays for better flow */
+        .grid-split .reveal:nth-child(2) { transition-delay: 0.2s; }
+        .grid-tri .tech-panel:nth-child(2) { transition-delay: 0.2s; }
+        .grid-tri .tech-panel:nth-child(3) { transition-delay: 0.4s; }
+
+        /* Team Name Block */
+        .team-block {
+            margin-top: 40px;
+            border-left: 2px solid var(--neon-cyan);
+            padding-left: 20px;
+            background: linear-gradient(90deg, rgba(0, 243, 255, 0.05), transparent);
+        }
+        .team-label {
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--neon-cyan);
+            margin-bottom: 5px;
+            letter-spacing: 1px;
+        }
+        .team-list {
+            list-style: none;
+            color: var(--text-primary);
+            font-size: 1.3rem;
+            font-weight: 700;
+            line-height: 1.4;
+            text-shadow: 0 0 10px rgba(0,0,0,0.5);
+        }
+        .team-list li {
+            position: relative;
+            transition: color 0.3s;
+        }
+        .team-list li:hover {
+            color: var(--neon-green);
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="matrixCanvas"></canvas>
+    <div class="scanlines"></div>
+
+    <nav>
+        <div class="container nav-inner">
+            <div class="logo">SEC<span>_OPS</span></div>
+            <div class="nav-links">
+                <a href="#basics">I. Concepts</a>
+                <a href="#math">II. Math</a>
+                <a href="#exploit">III. Exploit</a>
+                <a href="#lab">IV. Lab</a>
+                <a href="#history">V. History</a>
+                <a href="#defense">VI. Defense</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Slide 1: Hero -->
+    <section id="hero" style="justify-content: center; flex-direction: column; text-align: left;">
+        <div class="container grid-split">
+            <div class="reveal">
+                <p style="color: var(--neon-cyan); letter-spacing: 3px;">> TARGET_PROTOCOL: STREAM_CIPHER</p>
+                <h1 class="glitch-wrapper"><span class="glitch" data-text="RE-SYNC">RE-SYNC</span><br>ATTACK</h1>
+                <p style="font-size: 1.4rem; border-left: 3px solid var(--neon-red); padding-left: 20px; color: white;">
+                    CRITICAL VULNERABILITY ANALYSIS<br>
+                    <span style="color: var(--neon-red); font-size: 1rem;">STATUS: ACTIVE EXPLOIT</span>
+                </p>
+                
+                <!-- Student Names Block -->
+                <div class="team-block">
+                    <div class="team-label">// EXECUTED_BY:</div>
+                    <ul class="team-list">
+                        <li>علي واثق هادي</li>
+                        <li>حيدر علي حسن</li>
+                        <li>حيدر علي ثجيل</li>
+                    </ul>
+                </div>
+
+                <div style="margin-top: 40px;">
+                    <a href="#basics" class="btn-glitch">Start_Presentation</a>
+                </div>
+            </div>
+            <div class="reveal">
+                <div class="terminal">
+                    <span class="cmd-line">./analyze_traffic.sh --interface wlan0</span>
+                    <span class="output">[+] Monitoring...</span>
+                    <span class="output">[!] IV COLLISION DETECTED</span>
+                    <span class="output">[!] KEYSTREAM REUSE CONFIRMED</span>
+                    <span class="output danger">>>> DECRYPTING PAYLOAD...</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 2: Basics -->
+    <section id="basics">
+        <div class="container">
+            <h2 class="reveal">01. What is a Stream Cipher?</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <p>Stream ciphers (e.g., RC4, ChaCha20, AES-CTR) operate by generating a continuous flow of pseudo-random bits called the <span class="highlight">Keystream</span>.</p>
+                    <p>Unlike block ciphers which encrypt chunks of data, stream ciphers encrypt bit-by-bit. They are extremely fast and ideal for real-time communications like Wi-Fi and SSL/TLS.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <h3 class="highlight">Key Features</h3>
+                    <ul style="list-style: none; padding-left: 0;">
+                        <li style="margin-bottom: 10px; color: var(--text-dim);"><i class="fa-solid fa-bolt" style="color: var(--neon-cyan);"></i> High Speed / Low Latency</li>
+                        <li style="margin-bottom: 10px; color: var(--text-dim);"><i class="fa-solid fa-infinity" style="color: var(--neon-cyan);"></i> Infinite Stream Generation</li>
+                        <li style="margin-bottom: 10px; color: var(--text-dim);"><i class="fa-solid fa-link" style="color: var(--neon-cyan);"></i> Synchronous State</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 3: Components -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">02. The Key Ingredients</h2>
+            <div class="grid-tri">
+                <div class="tech-panel reveal">
+                    <i class="fa-solid fa-key" style="font-size: 3rem; color: var(--neon-purple); margin-bottom: 20px;"></i>
+                    <h3>The Key (K)</h3>
+                    <p>The long-term secret shared between Alice and Bob. This does not change frequently.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <i class="fa-solid fa-dice" style="font-size: 3rem; color: var(--neon-green); margin-bottom: 20px;"></i>
+                    <h3>The IV (Nonce)</h3>
+                    <p>Initialization Vector. A unique "salt" added to the Key for every message. It ensures the state is unique.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <i class="fa-solid fa-wave-square" style="font-size: 3rem; color: var(--neon-cyan); margin-bottom: 20px;"></i>
+                    <h3>The Keystream (S)</h3>
+                    <p>The output of the Generator `G(K, IV)`. This is the digital noise that masks the plaintext.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 4: XOR Mechanism -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">03. The XOR Mechanism</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <p>Stream ciphers rely entirely on the <strong>XOR</strong> (Exclusive OR) operation. It is fast and reversible.</p>
+                    <div class="terminal">
+                        <span class="cmd-line">python3 xor_logic.py</span>
+                        <span class="output">Plaintext (P) = 0 1 1 0</span>
+                        <span class="output">Keystream (S) = 1 1 0 0  (XOR)</span>
+                        <span class="output" style="border-top: 1px solid #555;">Ciphertext(C) = 1 0 1 0</span>
+                    </div>
+                </div>
+                <div class="reveal">
+                    <h3>The Magic Property</h3>
+                    <p class="code-snippet">A ⊕ B ⊕ B = A</p>
+                    <p>If you XOR the Ciphertext with the Keystream again, the Keystream cancels out, revealing the Plaintext. This simplicity is both a strength and a weakness.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 5: IV Necessity -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">04. The "One-Time" Rule</h2>
+            <div class="reveal" style="text-align: center;">
+                <p style="font-size: 1.4rem;">"Never use the same Keystream twice."</p>
+                <div class="tech-panel" style="margin-top: 30px; display: inline-block; text-align: left;">
+                    <p><i class="fa-solid fa-check" style="color: var(--neon-green);"></i> <strong>Correct:</strong> IV changes for every packet (1, 2, 3...).</p>
+                    <p><i class="fa-solid fa-xmark" style="color: var(--neon-red);"></i> <strong>Attack:</strong> IV repeats (1, 1, 1...).</p>
+                </div>
+                <p style="margin-top: 20px;">If the Key is static, the <strong>IV</strong> is the ONLY thing preventing the keystream from repeating.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 6: The Fatal Flaw -->
+    <section id="math">
+        <div class="container">
+            <h2 class="reveal">05. The Fatal Flaw</h2>
+            <div class="grid-split">
+                <div class="tech-panel reveal">
+                    <div style="color: var(--neon-red); font-size: 2rem; margin-bottom: 15px;"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                    <h3>State Reset</h3>
+                    <p>If an implementation fails to change the IV (or the IV counter loops back to 0), the internal state of the generator resets to the exact same initial conditions.</p>
+                    <p class="danger" style="font-size: 1.5rem;">State A == State B</p>
+                    <p>This means the cipher will output the <strong>exact same sequence of random bits</strong>.</p>
+                </div>
+                <div class="image-wrapper reveal">
+                    <!-- Placeholder for visual -->
+                    <div style="background: #111; padding: 20px; border: 1px solid var(--neon-red); text-align: center;">
+                        <p>Packet 1: <span class="highlight">Keystream_X</span> ⊕ Hello</p>
+                        <p>Packet 2: <span class="highlight">Keystream_X</span> ⊕ World</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 7: The Math -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">06. Deriving the Exploit</h2>
+            <div class="reveal">
+                <p>Let's do the algebra. Suppose we capture two ciphertexts ($C_1$ and $C_2$) encrypted with the same Keystream ($S$).</p>
+                <div class="terminal">
+                    <span class="output">Equation 1: C1 = P1 ⊕ S</span>
+                    <span class="output">Equation 2: C2 = P2 ⊕ S</span>
+                </div>
+                <p style="margin-top: 30px;">Now, let's XOR the two ciphertexts together:</p>
+                <div class="terminal" style="border-color: var(--neon-red);">
+                    <span class="cmd-line">calculate C1 ⊕ C2</span>
+                    <span class="output">= (P1 ⊕ S) ⊕ (P2 ⊕ S)</span>
+                    <span class="output">= P1 ⊕ P2 ⊕ (S ⊕ S)</span>
+                    <span class="output">= P1 ⊕ P2 ⊕ 0</span>
+                    <span class="output danger" style="font-size: 1.2rem;">= P1 ⊕ P2</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 8: The Result -->
+    <section id="exploit">
+        <div class="container">
+            <h2 class="reveal">07. Understanding P1 ⊕ P2</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <h3>The Mask Falls Off</h3>
+                    <p>The result <code>P1 ⊕ P2</code> means we have stripped away the encryption completely. The Key ($K$) and Keystream ($S$) are gone.</p>
+                    <p>We are left with the XOR sum of two plaintexts. While this looks like gibberish initially, it contains the <strong>structure</strong> of both messages combined.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <h3>Why is this readable?</h3>
+                    <p>English text is highly redundant. It has structure (spaces, 'e' frequency, common words). Random noise (encryption) hides this. When the noise is removed, the structure returns.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 9: Crib Dragging -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">08. Technique: Crib Dragging</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <p>How do attackers read <code>P1 ⊕ P2</code>? They use "Crib Dragging".</p>
+                    <ol style="margin-left: 20px; color: var(--text-dim);">
+                        <li style="margin-bottom: 10px;">Guess a common word (a "crib") like " the ".</li>
+                        <li style="margin-bottom: 10px;">XOR the crib with the result at every position.</li>
+                        <li style="margin-bottom: 10px;">If the output looks like valid text, the guess is correct.</li>
+                    </ol>
+                    <p class="highlight" style="margin-top: 20px;">Solving one part of P1 automatically reveals the corresponding part of P2.</p>
+                </div>
+                <div class="terminal reveal">
+                    <span class="cmd-line">./crib_drag.py --input XOR_DUMP</span>
+                    <span class="output">Trying " the "...</span>
+                    <span class="output">@ Pos 0: "Xl8q?" (Fail)</span>
+                    <span class="output">@ Pos 4: "meet " (Success!)</span>
+                    <span class="output highlight">P1 Part: " the "</span>
+                    <span class="output highlight">P2 Part: "meet "</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 10: Interactive Lab -->
+    <section id="lab">
+        <div class="container">
+            <h2 class="reveal">09. Interactive Lab</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <h3>Simulate the Crash</h3>
+                    <p>Type two messages. The tool calculates <code>P1 ⊕ P2</code>. This hex result is what an attacker captures.</p>
+                    <p>Note how changing one character in P1 immediately changes the result, proving the texts are linked without encryption.</p>
+                </div>
+                <div class="reveal">
+                    <div class="crypto-lab">
+                        <div style="margin-bottom: 10px; color: var(--neon-cyan);">> INPUT_STREAM_01</div>
+                        <input type="text" class="lab-input" id="p1" placeholder="ENTER MESSAGE A" value="ATTACK AT DAWN">
+                        
+                        <div style="margin-bottom: 10px; color: var(--neon-cyan);">> INPUT_STREAM_02</div>
+                        <input type="text" class="lab-input" id="p2" placeholder="ENTER MESSAGE B" value="SECRET MEETING">
+                        
+                        <div style="margin-bottom: 10px; color: var(--neon-red);">> XOR_OUTPUT (Raw Exploit Data)</div>
+                        <div class="lab-result" id="xor-result">CALCULATING...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 11: WEP History -->
+    <section id="history">
+        <div class="container">
+            <h2 class="reveal">10. History: The Fall of WEP</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <p><strong>Wired Equivalent Privacy (WEP)</strong> (1997) is the classic cautionary tale.</p>
+                    <p>WEP used an IV of only <strong>24 bits</strong>. This means there are only 16.7 million unique IVs ($2^{24}$).</p>
+                    <p>On a busy network, these run out in a few hours. The counter wraps around, IVs repeat, and the network is wide open.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <h3 class="danger">The FMS Attack</h3>
+                    <p>Researchers Fluhrer, Mantin, and Shamir (FMS) discovered that not only does IV reuse allow XOR attacks, but specific "weak IVs" leak bytes of the master key directly.</p>
+                    <p class="code-snippet">Time to Crack: ~3 Minutes</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 12: MS-PPTP -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">11. History: MS-PPTP Failure</h2>
+            <div class="grid-split">
+                <div class="tech-panel reveal">
+                    <i class="fa-brands fa-windows" style="font-size: 3rem; color: var(--neon-cyan); margin-bottom: 20px;"></i>
+                    <h3>The Setup</h3>
+                    <p>Microsoft's early VPN protocol (PPTP) used the RC4 stream cipher.</p>
+                </div>
+                <div class="reveal">
+                    <h3>The Mistake</h3>
+                    <p>The server used the <strong>same IV</strong> for the "Server-to-Client" stream AND the "Client-to-Server" stream.</p>
+                    <p>An attacker could simply capture the upstream traffic and XOR it with the downstream traffic to decrypt the entire VPN session.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 13: Modern Threat -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">12. Modern Threat: AES-GCM</h2>
+            <div class="grid-split">
+                <div class="reveal">
+                    <p>You might think this is an old problem. It isn't. Modern crypto like <strong>AES-GCM</strong> uses Counter Mode (CTR), which acts as a stream cipher.</p>
+                    <p class="danger">"Nonce Reuse" in GCM is instantly fatal.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <h3>The GCM Collapse</h3>
+                    <p>AES-GCM adds an authentication tag (GHASH). If the Nonce repeats, the attacker can recover the GHASH authentication key ($H$).</p>
+                    <p>This allows <span class="highlight">Packet Forgery</span>. The attacker can encrypt their own malware and sign it as if it came from the legitimate server.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 14: Impact Analysis -->
+    <section>
+        <div class="container">
+            <h2 class="reveal">13. Impact Analysis</h2>
+            <div class="grid-tri">
+                <div class="tech-panel reveal">
+                    <div style="font-size: 2rem; color: var(--neon-red); margin-bottom: 10px;">CIA TRIAD</div>
+                    <h3>Confidentiality</h3>
+                    <p><strong>COMPLETELY LOST.</strong> Passive observers can read all past and future traffic encrypted with the reused keystream.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <div style="font-size: 2rem; color: var(--neon-red); margin-bottom: 10px;">CIA TRIAD</div>
+                    <h3>Integrity</h3>
+                    <p><strong>COMPROMISED.</strong> In authenticated ciphers (GCM, Poly1305), key recovery allows attackers to tamper with data without detection.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <div style="font-size: 2rem; color: var(--neon-red); margin-bottom: 10px;">CIA TRIAD</div>
+                    <h3>Availability</h3>
+                    <p><strong>AT RISK.</strong> Attackers can inject reset packets (RST) into the stream, disconnecting legitimate users.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 15: Defense -->
+    <section id="defense">
+        <div class="container">
+            <h2 class="reveal">14. Defense Strategies</h2>
+            <div class="grid-tri">
+                <div class="tech-panel reveal">
+                    <i class="fa-solid fa-expand" style="font-size: 2.5rem; color: var(--neon-green); margin-bottom: 15px;"></i>
+                    <h3>Larger IVs</h3>
+                    <p>Use 96-bit or 128-bit Random Nonces. With 96 bits, the chance of a collision is effectively zero for the lifetime of the universe.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <i class="fa-solid fa-forward-step" style="font-size: 2.5rem; color: var(--neon-green); margin-bottom: 15px;"></i>
+                    <h3>Deterministic Counters</h3>
+                    <p>Don't roll dice. Use a counter (1, 2, 3...). It is mathematically impossible to repeat a number if implemented correctly.</p>
+                </div>
+                <div class="tech-panel reveal">
+                    <i class="fa-solid fa-rotate" style="font-size: 2.5rem; color: var(--neon-green); margin-bottom: 15px;"></i>
+                    <h3>Key Rotation</h3>
+                    <p>If you fear the counter might roll over, change the Key. A new Key resets the entire safety margin.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Slide 16: Conclusion -->
+    <section>
+        <div class="container" style="text-align: center;">
+            <h2 class="reveal" style="justify-content: center;">15. Conclusion</h2>
+            <div class="reveal" style="max-width: 800px; margin: 0 auto;">
+                <p>The Re-synchronization Attack is not a failure of the encryption algorithm (math), but a failure of the <strong>implementation</strong> (protocol).</p>
+                <p>Even the strongest cipher (AES-256) breaks instantly if you make the mistake of repeating the IV.</p>
+                <div style="margin-top: 50px;">
+                    <p style="font-size: 1.5rem; color: var(--neon-green);">// PRESENTATION_COMPLETE</p>
+                    <p style="color: #555;">CYS-401 FINAL PROJECT</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <script>
+        // --- 1. Matrix Background ---
+        const canvas = document.getElementById('matrixCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        const particles = [];
+        const particleCount = 70;
+
+        class Particle {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.speedY = Math.random() * 2 + 0.5;
+                this.color = Math.random() > 0.8 ? '#00ff41' : '#003300';
+                this.size = Math.random() * 3;
+            }
+            update() {
+                this.y += this.speedY;
+                if (this.y > canvas.height) this.y = 0;
+            }
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, 2, this.size * 5); 
+            }
+        }
+
+        for (let i = 0; i < particleCount; i++) particles.push(new Particle());
+
+        function animateBG() {
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.1)'; 
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            particles.forEach(p => { p.update(); p.draw(); });
+            requestAnimationFrame(animateBG);
+        }
+        animateBG();
+
+        // --- 2. Interactive XOR Lab ---
+        const p1Input = document.getElementById('p1');
+        const p2Input = document.getElementById('p2');
+        const resultBox = document.getElementById('xor-result');
+
+        function updateXOR() {
+            const str1 = p1Input.value;
+            const str2 = p2Input.value;
+            let resultHex = "";
+            
+            const maxLength = Math.max(str1.length, str2.length);
+
+            for (let i = 0; i < maxLength; i++) {
+                const code1 = i < str1.length ? str1.charCodeAt(i) : 0;
+                const code2 = i < str2.length ? str2.charCodeAt(i) : 0;
+                const xorVal = code1 ^ code2;
+                resultHex += xorVal.toString(16).toUpperCase().padStart(2, '0') + " ";
+            }
+            
+            resultBox.innerText = resultHex.trim() || "WAITING_FOR_INPUT...";
+        }
+
+        p1Input.addEventListener('input', updateXOR);
+        p2Input.addEventListener('input', updateXOR);
+        updateXOR(); 
+
+        // --- 3. Scroll Animations ---
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, { threshold: 0.15 });
+
+        document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    </script>
+</body>
+</html>
